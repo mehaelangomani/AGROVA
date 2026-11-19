@@ -1,0 +1,40 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@1,400;1,500;1,600&display=swap');
+@import "tailwindcss";
+
+* { font-family: 'Inter', sans-serif; box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: #080808; }
+.font-playfair { font-family: 'Playfair Display', serif; }
+
+@keyframes heroReveal {
+  0% { opacity: 0; transform: translateY(28px); filter: blur(12px); }
+  100% { opacity: 1; transform: translateY(0); filter: blur(0); }
+}
+@keyframes heroFadeUp {
+  0% { opacity: 0; transform: translateY(20px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+@keyframes heroZoom {
+  0% { transform: scale(1.12); }
+  100% { transform: scale(1); }
+}
+.hero-anim { opacity: 0; animation-fill-mode: forwards; animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1); }
+.hero-reveal { animation-name: heroReveal; animation-duration: 1.1s; }
+.hero-fade { animation-name: heroFadeUp; animation-duration: 1s; }
+.hero-zoom { animation: heroZoom 1.8s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+
+.input-field { display: flex; flex-direction: column; gap: 10px; color: rgba(255,255,255,.88); }
+.input-field > span { display: flex; align-items: center; gap: 9px; font-size: 13px; font-weight: 600; }
+.input-field small { color: rgba(255,255,255,.38); font-size: 11px; line-height: 1.5; }
+.input-wrap { min-height: 54px; display: flex; align-items: center; gap: 12px; padding: 0 16px; border-radius: 14px; background: #202020; border: 1px solid rgba(255,255,255,.09); transition: border-color .2s, background .2s; }
+.input-wrap:focus-within { border-color: rgba(211,90,37,.8); background: #24201d; }
+.input-wrap input, .input-wrap select { width: 100%; min-width: 0; color: #fff; background: transparent; outline: none; border: 0; font-size: 15px; padding: 14px 0; }
+.input-wrap input::-webkit-inner-spin-button, .input-wrap input::-webkit-outer-spin-button { opacity: 1; }
+.input-wrap b { color: rgba(255,255,255,.42); font-size: 11px; font-weight: 500; white-space: nowrap; }
+.input-wrap select { appearance: none; cursor: pointer; }
+.input-wrap select option { background: #202020; color: #fff; }
+.select-wrap { position: relative; }
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .hero-anim, .hero-zoom { animation: none; opacity: 1; }
+}
