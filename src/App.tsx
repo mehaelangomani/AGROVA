@@ -339,7 +339,7 @@ export default function App() {
           <div className="text-center max-w-2xl mx-auto mb-10 sm:mb-14">
             <p className="text-[#D35A25] uppercase tracking-[0.24em] text-xs font-semibold mb-4">01 / Farm details</p>
             <h2 className="font-playfair italic text-4xl sm:text-6xl font-normal mb-4">Every acre has potential.</h2>
-            <p className="text-white/60 text-sm sm:text-base leading-relaxed">Share your available resources and growing season. Flora will compare crop combinations against your farm's limits.</p>
+            <p className="text-white/60 text-sm sm:text-base leading-relaxed">Share your available resources and growing season. AGROVA will compare crop combinations against your farm's limits.</p>
           </div>
 
           <form onSubmit={calculate} className="rounded-[2rem] border border-white/10 bg-[#151515] p-5 sm:p-9 md:p-12 shadow-2xl">
@@ -456,7 +456,7 @@ export default function App() {
               <div><p className="text-white/40 text-xs mb-1">Compared with exhaustive search</p><p className="text-white/80">Reuses resource states rather than repeatedly solving equivalent subproblems.</p></div>
             </div>
           </div>
-          <p className="text-center text-[11px] text-white/30 mt-8 leading-relaxed">FLORA · SEEDSELECT CROP SELECTION OPTIMIZER<br />Illustrative academic prototype. Actual crop suitability, costs, water needs and returns vary by location, soil, variety and market conditions.</p>
+          <p className="text-center text-[11px] text-white/30 mt-8 leading-relaxed">AGROVA — CROP SELECTION OPTIMIZER<br />Illustrative academic prototype. Actual crop suitability, costs, water needs and returns vary by location, soil, variety and market conditions.</p>
         </div>
       </section>}
     </main>

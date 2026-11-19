@@ -1,4 +1,4 @@
-# Flora — SEEDSELECT Crop Selection Optimizer
+# AGROVA — Crop Selection Optimizer
 
 A single-page React + Vite application for an academic Design and Analysis of Algorithms project.
 
@@ -22,9 +22,9 @@ The included `.npmrc` enables legacy peer-dependency resolution for this starter
 
 - Landing hero → Start Growing scrolls to the farm input form.
 - Inputs: land (acres), budget (₹ lakh), available water (lakh litres), and season.
-- Calculate runs Brute Force, Greedy, Dynamic Programming, and Backtracking.
+- Calculate runs Brute Force, Divide and Conquer, Dynamic Programming, and Greedy.
 - Select any algorithm card to inspect its crop allocation, profit, resource usage, explanation, complexity and measured execution time.
-- A final section recommends Dynamic Programming for this constrained optimization model.
+- A final section recommends the most efficient exact algorithm based on measured performance.
 
 ## Important data note
 
