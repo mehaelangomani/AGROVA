@@ -8,7 +8,7 @@ const BG_IMAGE_2 =
 
 const SPOTLIGHT_R = 260;
 type Season = 'Kharif' | 'Rabi' | 'Zaid';
-type AlgorithmId = 'brute' | 'divideconquer' | 'dp' | 'greedy';
+type AlgorithmId = 'brute' | 'backtracking' | 'dp' | 'branchbound';
 type Inputs = { land: number; budget: number; water: number; season: Season };
 type Crop = { name: string; seasons: Season[]; cost: number; water: number; profit: number; note: string };
 type Plan = { crop: Crop; acres: number };
@@ -174,7 +174,7 @@ function bruteForce(crops: Crop[], input: Inputs): Result {
         `Binary combinations: ${totalCombinations === Infinity ? 'infinite' : totalCombinations.toLocaleString()} (${units.length} units).`,
         `Estimated recursive allocation vectors: more than ${RECURSIVE_STATE_LIMIT.toLocaleString()} (exceeds limit).`,
         `Brute Force cannot guarantee an exact result within practical time limits.`,
-        `Reduce land, budget, or water limits, or use Dynamic Programming or Divide and Conquer for an exact solution.`
+        `Reduce land, budget, or water limits, or use Dynamic Programming or Branch and Bound for an exact solution.`
       ],
       `O(2^{ΣmaxAcres}) binary / O(Π(maxAcres_i + 1)) recursive`, `O(${crops.length})`);
   }
@@ -218,20 +218,235 @@ function bruteForce(crops: Crop[], input: Inputs): Result {
     'O(Π(maxAcres_i + 1)) ⊆ O((L + 1)^C)', 'O(C) recursion');
 }
 
-function greedy(crops: Crop[], input: Inputs): Result {
-  const started = performance.now(); let land = 0, budget = 0, water = 0, explored = 0;
-  const plans: Plan[] = [];
-  const ranked = [...crops].sort((a, b) => (b.profit / (b.cost + b.water * 0.01)) - (a.profit / (a.cost + a.water * 0.01)));
-  for (const crop of ranked) {
+function backtracking(crops: Crop[], input: Inputs): Result {
+  const started = performance.now();
+  let explored = 0;
+  let bestProfit = 0;
+  const allocation = Array(crops.length).fill(0);
+  let bestAllocation = Array(crops.length).fill(0);
+  const EPSILON = 1e-9;
+
+  const visit = (
+    index: number,
+    remainingLand: number,
+    remainingBudget: number,
+    remainingWater: number,
+    profit: number
+  ) => {
     explored++;
-    const qty = Math.max(0, Math.min(input.land - land, Math.floor((input.budget - budget + 1e-9) / crop.cost), Math.floor((input.water - water + 1e-9) / crop.water)));
-    if (qty > 0) {
-      plans.push({ crop, acres: qty }); land += qty; budget += qty * crop.cost; water += qty * crop.water;
+
+    if (index === crops.length) {
+      if (profit > bestProfit + EPSILON) {
+        bestProfit = profit;
+        bestAllocation = [...allocation];
+      }
+      return;
+    }
+
+    const crop = crops[index];
+    const maxQty = Math.max(0, Math.min(
+      remainingLand,
+      Math.floor((remainingBudget + EPSILON) / crop.cost),
+      Math.floor((remainingWater + EPSILON) / crop.water)
+    ));
+
+    // Try every feasible whole-acre quantity for this crop.
+    for (let qty = 0; qty <= maxQty; qty++) {
+      allocation[index] = qty;
+      visit(
+        index + 1,
+        remainingLand - qty,
+        remainingBudget - qty * crop.cost,
+        remainingWater - qty * crop.water,
+        profit + qty * crop.profit
+      );
+    }
+
+    allocation[index] = 0;
+  };
+
+  visit(0, input.land, input.budget, input.water, 0);
+
+  const plans = bestAllocation
+    .map((acres, i) => ({ crop: crops[i], acres }))
+    .filter(plan => plan.acres > 0);
+
+  return makeResult(
+    'backtracking',
+    'Backtracking',
+    plans,
+    explored,
+    started,
+    true,
+    'completed',
+    [
+      'Process the eligible crops recursively, one crop at a time.',
+      'For the current crop, calculate the maximum whole-acre quantity allowed by the remaining land, budget and water.',
+      'Explore every feasible quantity from zero up to that maximum, then move to the next crop.',
+      'Backtrack by restoring the current crop allocation before exploring the next choice.',
+      'Compare complete feasible allocations and retain the one with the highest expected profit.'
+    ],
+    'O(Π(uᵢ + 1)) worst case, where uᵢ is the feasible per-crop acreage bound',
+    'O(C) recursion depth and allocation storage'
+  );
+}
+
+function branchAndBound(crops: Crop[], input: Inputs): Result {
+  const started = performance.now();
+  const EPSILON = 1e-9;
+  const NODE_LIMIT = 1000000;
+  let explored = 0;
+  let bestProfit = 0;
+  let bestAllocation = Array(crops.length).fill(0);
+
+  type SearchNode = {
+    index: number;
+    remainingLand: number;
+    remainingBudget: number;
+    remainingWater: number;
+    profit: number;
+    allocation: number[];
+    upperBound: number;
+  };
+
+  const getMaxQty = (crop: Crop, land: number, budget: number, water: number) =>
+    Math.max(0, Math.min(
+      land,
+      Math.floor((budget + EPSILON) / crop.cost),
+      Math.floor((water + EPSILON) / crop.water)
+    ));
+
+  // Each relaxation drops two resource constraints. The per-crop cap still
+  // respects all three remaining resources, so each value is an admissible UB.
+  const fractionalRelaxation = (
+    index: number,
+    capacity: number,
+    resource: 'land' | 'budget' | 'water',
+    remainingLand: number,
+    remainingBudget: number,
+    remainingWater: number,
+    currentProfit: number
+  ) => {
+    const candidates = crops.slice(index).map(crop => {
+      const weight = resource === 'land' ? 1 : resource === 'budget' ? crop.cost : crop.water;
+      const cap = getMaxQty(crop, remainingLand, remainingBudget, remainingWater);
+      return { crop, weight, cap, ratio: crop.profit / weight };
+    }).filter(item => item.cap > 0)
+      .sort((a, b) => b.ratio - a.ratio);
+
+    let available = capacity;
+    let additionalProfit = 0;
+
+    for (const item of candidates) {
+      if (available <= EPSILON) break;
+      const quantity = Math.min(item.cap, available / item.weight);
+      additionalProfit += quantity * item.crop.profit;
+      available -= quantity * item.weight;
+    }
+
+    return currentProfit + additionalProfit;
+  };
+
+  const calculateUpperBound = (node: Omit<SearchNode, 'upperBound'>) => {
+    if (node.index >= crops.length) return node.profit;
+    const landBound = fractionalRelaxation(
+      node.index, node.remainingLand, 'land',
+      node.remainingLand, node.remainingBudget, node.remainingWater, node.profit
+    );
+    const budgetBound = fractionalRelaxation(
+      node.index, node.remainingBudget, 'budget',
+      node.remainingLand, node.remainingBudget, node.remainingWater, node.profit
+    );
+    const waterBound = fractionalRelaxation(
+      node.index, node.remainingWater, 'water',
+      node.remainingLand, node.remainingBudget, node.remainingWater, node.profit
+    );
+    return Math.min(landBound, budgetBound, waterBound);
+  };
+
+  const rootWithoutBound = {
+    index: 0,
+    remainingLand: input.land,
+    remainingBudget: input.budget,
+    remainingWater: input.water,
+    profit: 0,
+    allocation: Array(crops.length).fill(0)
+  };
+  const stack: SearchNode[] = [{
+    ...rootWithoutBound,
+    upperBound: calculateUpperBound(rootWithoutBound)
+  }];
+  let hitNodeLimit = false;
+
+  while (stack.length > 0) {
+    if (explored >= NODE_LIMIT) {
+      hitNodeLimit = true;
+      break;
+    }
+
+    const node = stack.pop()!;
+    explored++;
+
+    if (node.upperBound <= bestProfit + EPSILON) continue;
+
+    if (node.index === crops.length) {
+      if (node.profit > bestProfit + EPSILON) {
+        bestProfit = node.profit;
+        bestAllocation = [...node.allocation];
+      }
+      continue;
+    }
+
+    const crop = crops[node.index];
+    const maxQty = getMaxQty(
+      crop, node.remainingLand, node.remainingBudget, node.remainingWater
+    );
+
+    // LIFO stack: pushing low quantities first explores high-profit quantities first.
+    for (let qty = 0; qty <= maxQty; qty++) {
+      const childWithoutBound = {
+        index: node.index + 1,
+        remainingLand: node.remainingLand - qty,
+        remainingBudget: node.remainingBudget - qty * crop.cost,
+        remainingWater: node.remainingWater - qty * crop.water,
+        profit: node.profit + qty * crop.profit,
+        allocation: [...node.allocation]
+      };
+      childWithoutBound.allocation[node.index] = qty;
+
+      const upperBound = calculateUpperBound(childWithoutBound);
+      if (upperBound > bestProfit + EPSILON) {
+        stack.push({ ...childWithoutBound, upperBound });
+      }
     }
   }
-  return makeResult('greedy', 'Greedy', plans, explored, started, false, 'heuristic',
-    ['Rank eligible crops by a profit-to-resource score.', 'Allocate as many acres as possible to the highest-ranked crop.', 'Move to the next crop until no land or resources remain.', 'This is a fast heuristic; a locally attractive choice can block a better overall combination.'],
-    'O(C log C + C)', 'O(C)');
+
+  const plans = bestAllocation
+    .map((acres, i) => ({ crop: crops[i], acres }))
+    .filter(plan => plan.acres > 0);
+
+  const complete = !hitNodeLimit;
+  return makeResult(
+    'branchbound',
+    'Branch and Bound',
+    plans,
+    explored,
+    started,
+    complete,
+    complete ? 'completed' : 'heuristic',
+    [
+      'Represent each partial crop allocation as a search node containing its remaining resources, current profit and allocation path.',
+      'Calculate three fractional upper bounds: land-only, budget-only and water-only. Each relaxation is optimistic because it removes two constraints.',
+      'Use the minimum of those valid upper bounds to estimate the best profit still reachable from the node.',
+      'Expand feasible whole-acre quantities and prioritize promising branches using a depth-first stack.',
+      'Prune a branch when its upper bound cannot beat the best complete allocation found so far.',
+      complete
+        ? 'The search stack was exhausted, so the best retained allocation is proven optimal.'
+        : `The ${NODE_LIMIT.toLocaleString('en-IN')}-node safety limit was reached. The displayed allocation is feasible, but optimality was not proven.`
+    ],
+    'Worst case: O(Π(uᵢ + 1)); pruning often reduces explored nodes',
+    'O(N × C) for the search stack and stored allocation paths'
+  );
 }
 
 function dynamicProgramming(crops: Crop[], input: Inputs): Result {
@@ -291,7 +506,7 @@ function dynamicProgramming(crops: Crop[], input: Inputs): Result {
                 `DP state limit exceeded (${MAX_DP_STATES.toLocaleString()} states).`,
                 `The resource combination space grew too large for exact bottom-up tabulation.`,
                 `Layer ${i + 1} (${crop.name}) reached the limit while generating state ${key}.`,
-                `Reduce land, budget, or water limits, or use Divide and Conquer for an exact solution.`
+                `Reduce land, budget, or water limits, or use Branch and Bound for an exact solution.`
               ],
               `O(C × min(S, ${MAX_DP_STATES}))`, `O(min(S, ${MAX_DP_STATES}) × C)`);
           }
@@ -322,97 +537,21 @@ function dynamicProgramming(crops: Crop[], input: Inputs): Result {
     `O(C × S × L) capped at ${MAX_DP_STATES} states`, `O(S × C) capped at ${MAX_DP_STATES} states`);
 }
 
-function divideAndConquer(crops: Crop[], input: Inputs): Result {
-  const started = performance.now();
-  let explored = 0;
-
-  type Allocation = { land: number; cost: number; water: number; profit: number; counts: number[] };
-
-  const generateAllocations = (cropList: Crop[], baseIndex: number): Allocation[] => {
-    const results: Allocation[] = [];
-    const allocation = Array(cropList.length).fill(0);
-
-    const visit = (index: number, land: number, cost: number, water: number, profit: number) => {
-      if (index === cropList.length) {
-        explored++;
-        results.push({ land, cost, water, profit, counts: [...allocation] });
-        return;
-      }
-      const crop = cropList[index];
-      const max = Math.max(0, Math.min(input.land - land, Math.floor((input.budget - cost + 1e-9) / crop.cost), Math.floor((input.water - water + 1e-9) / crop.water)));
-      for (let qty = 0; qty <= max; qty++) {
-        allocation[index] = qty;
-        visit(index + 1, land + qty, cost + qty * crop.cost, water + qty * crop.water, profit + qty * crop.profit);
-      }
-      allocation[index] = 0;
-    };
-    visit(0, 0, 0, 0, 0);
-    return results;
-  };
-
-  const mid = Math.floor(crops.length / 2);
-  const leftCrops = crops.slice(0, mid);
-  const rightCrops = crops.slice(mid);
-
-  const leftAllocations = generateAllocations(leftCrops, 0);
-  const rightAllocations = generateAllocations(rightCrops, mid);
-
-  rightAllocations.sort((a, b) => a.cost - b.cost || a.water - b.water || a.land - b.land);
-
-  const rightBest = new Map<string, Allocation>();
-  for (const alloc of rightAllocations) {
-    const key = `${alloc.land}|${Math.round(alloc.cost * 100)}|${Math.round(alloc.water * 10)}`;
-    const existing = rightBest.get(key);
-    if (!existing || alloc.profit > existing.profit) {
-      rightBest.set(key, alloc);
-    }
-  }
-  const rightUnique = Array.from(rightBest.values());
-
-  let bestProfit = 0;
-  let bestLeft: Allocation | null = null;
-  let bestRight: Allocation | null = null;
-
-  for (const left of leftAllocations) {
-    const remLand = input.land - left.land;
-    const remCost = input.budget - left.cost;
-    const remWater = input.water - left.water;
-    if (remLand < 0 || remCost < 0 || remWater < 0) continue;
-
-    for (const right of rightUnique) {
-      if (right.land > remLand || right.cost > remCost + 1e-9 || right.water > remWater + 1e-9) continue;
-      const totalProfit = left.profit + right.profit;
-      if (totalProfit > bestProfit) {
-        bestProfit = totalProfit;
-        bestLeft = left;
-        bestRight = right;
-      }
-    }
-  }
-
-  const finalCounts = [...(bestLeft?.counts ?? Array(leftCrops.length).fill(0)), ...(bestRight?.counts ?? Array(rightCrops.length).fill(0))];
-  const plans = finalCounts.map((acres, i) => ({ crop: crops[i], acres })).filter(p => p.acres > 0);
-
-  return makeResult('divideconquer', 'Divide and Conquer', plans, explored, started, true, 'completed',
-    ['Split the crop list into two halves.', 'Generate all feasible allocations for each half independently (conquer).', 'For the right half, keep only the best profit for each distinct resource-use state.', 'Combine by pairing each left allocation with the best compatible right allocation that fits the remaining land, budget and water.', 'Select the combined allocation with the highest total profit.'],
-    'O(2^(C/2) × S)', 'O(2^(C/2) × S)');
-}
-
 function runAlgorithms(input: Inputs): Result[] {
   const eligible = CROPS.filter(c => c.seasons.includes(input.season));
   return [
     bruteForce(eligible, input),
-    divideAndConquer(eligible, input),
+    backtracking(eligible, input),
     dynamicProgramming(eligible, input),
-    greedy(eligible, input),
+    branchAndBound(eligible, input),
   ];
 }
 
 const ALGORITHM_INFO: { id: AlgorithmId; number: string; description: string; icon: string }[] = [
   { id: 'brute', number: '01', description: 'Checks every feasible crop allocation to find the maximum profit.', icon: '⌕' },
-  { id: 'divideconquer', number: '02', description: 'Splits crops into halves, solves each independently, then combines optimal subsolutions.', icon: '⊞' },
+  { id: 'backtracking', number: '02', description: 'Explores feasible crop quantities recursively and backtracks to find the best allocation.', icon: '↶' },
   { id: 'dp', number: '03', description: 'Stores best results for repeated land, budget and water states.', icon: '▦' },
-  { id: 'greedy', number: '04', description: 'Makes the best immediate resource-efficiency choice at each step.', icon: '↗' },
+  { id: 'branchbound', number: '04', description: 'Uses optimistic profit bounds to prune branches that cannot improve the best solution.', icon: '⌁' },
 ];
 
 export default function App() {
@@ -427,8 +566,61 @@ export default function App() {
     water: '25',
   });
   const [results, setResults] = useState<Result[] | null>(null);
-  const [selected, setSelected] = useState<AlgorithmId>('divideconquer');
+  const [selected, setSelected] = useState<AlgorithmId>('backtracking');
   const [error, setError] = useState('');
+
+useEffect(() => {
+  const animate = () => {
+    const target = mouse.current;
+
+    smooth.current.x += (target.x - smooth.current.x) * 0.1;
+    smooth.current.y += (target.y - smooth.current.y) * 0.1;
+
+    setCursorPos({
+      x: smooth.current.x,
+      y: smooth.current.y,
+    });
+
+    const dx = target.x - smooth.current.x;
+    const dy = target.y - smooth.current.y;
+
+    if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
+      rafRef.current = requestAnimationFrame(animate);
+    } else {
+      rafRef.current = null;
+    }
+  };
+
+  const handleMouseMove = (event: MouseEvent) => {
+    mouse.current = {
+      x: event.clientX,
+      y: event.clientY,
+    };
+
+    // Start at the cursor's position on its first movement.
+    if (smooth.current.x === -999) {
+      smooth.current = {
+        x: event.clientX,
+        y: event.clientY,
+      };
+    }
+
+    if (rafRef.current === null) {
+      rafRef.current = requestAnimationFrame(animate);
+    }
+  };
+
+  window.addEventListener('mousemove', handleMouseMove);
+
+  return () => {
+    window.removeEventListener('mousemove', handleMouseMove);
+
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+    }
+  };
+}, []);
+
 
   const updateInput = (key: keyof Inputs, value: string) => {
     if (key === 'season') {
@@ -489,35 +681,60 @@ export default function App() {
     const syncedInputs = validateAndSyncInputs();
     if (!syncedInputs) return;
     const output = runAlgorithms(syncedInputs);
-    setResults(output); setSelected('divideconquer');
+    setResults(output); setSelected('backtracking');
     window.setTimeout(() => document.getElementById('algorithm-results')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
   };
+const selectedResult = results?.find(r => r.id === selected);
 
-  const selectedResult = results?.find(r => r.id === selected);
-  const exactResults = results?.filter(r => r.exact) ?? [];
-  const bestExact = exactResults.reduce<Result | null>((best, current) => !best || current.profit > best.profit ? current : best, null);
+const exactResults = results?.filter(
+  r => r.exact && r.status === 'completed'
+) ?? [];
 
-  const allExactOptimal = exactResults.length >= 2 && exactResults.every(r => Math.abs(r.profit - bestExact!.profit) < 1e-9);
-  let recommendation = 'Divide and Conquer';
-  let recommendationReason = 'It splits the problem into independent halves, solves each exactly, and combines results — delivering the optimal profit with far fewer explored states than brute force.';
+const bestExact = exactResults.reduce<Result | null>(
+  (best, current) =>
+    !best || current.profit > best.profit ? current : best,
+  null
+);
 
-  if (allExactOptimal && exactResults.length === 3) {
-    const brute = exactResults.find(r => r.id === 'brute')!;
-    const dc = exactResults.find(r => r.id === 'divideconquer')!;
-    const dp = exactResults.find(r => r.id === 'dp')!;
-    const fastest = [brute, dc, dp].reduce((best, current) => current.elapsed < best.elapsed ? current : best);
-    const fewestStates = [brute, dc, dp].reduce((best, current) => current.explored < best.explored ? current : best);
-    if (fastest.id === fewestStates.id) {
-      recommendation = ALGORITHM_INFO.find(a => a.id === fastest.id)!.number === '02' ? 'Divide and Conquer' : (fastest.id === 'dp' ? 'Dynamic Programming' : 'Brute Force');
-      recommendationReason = `All exact methods found the same optimal profit. ${recommendation} explored the fewest states (${fewestStates.explored.toLocaleString('en-IN')}) and ran fastest (${fastest.elapsed.toFixed(3)} ms).`;
-    } else {
-      recommendation = 'Divide and Conquer';
-      recommendationReason = `All exact methods found the same optimal profit. Divide and Conquer offers the best trade-off: it explores exponentially fewer states than brute force (${dc.explored.toLocaleString('en-IN')} vs ${brute.explored.toLocaleString('en-IN')}) while remaining exact.`;
-    }
-  } else if (!allExactOptimal && exactResults.length > 0) {
-    recommendation = bestExact!.id === 'dp' ? 'Dynamic Programming' : (bestExact!.id === 'divideconquer' ? 'Divide and Conquer' : 'Brute Force');
-    recommendationReason = 'It achieved the highest profit among exact methods for this input.';
+const fastestExact = exactResults.reduce<Result | null>(
+  (best, current) =>
+    !best || current.elapsed < best.elapsed ? current : best,
+  null
+);
+
+let recommendation = bestExact?.title ?? 'No exact result available';
+
+let recommendationReason = bestExact
+  ? `${bestExact.title} produced the highest verified profit among the completed exact methods.`
+  : 'No algorithm completed an exact search for these inputs. Review the algorithm results and resource limits.';
+
+if (exactResults.length > 1 && fastestExact && bestExact) {
+  const allAgree = exactResults.every(
+    result => Math.abs(result.profit - bestExact.profit) < 1e-9
+  );
+
+  if (allAgree) {
+    recommendation = fastestExact.title;
+
+    recommendationReason =
+      `All completed exact methods found the same optimal profit. ` +
+      `${fastestExact.title} was the fastest for this run ` +
+      `(${fastestExact.elapsed.toFixed(3)} ms). ` +
+      `Execution time can vary between runs.`;
+  } else {
+    recommendation = bestExact.title;
+
+    recommendationReason =
+      `The completed exact methods produced different profits. ` +
+      `${bestExact.title} found the highest verified profit.`;
   }
+} else if (exactResults.length === 1 && bestExact) {
+  recommendation = bestExact.title;
+
+  recommendationReason =
+    `${bestExact.title} completed an exact search and found the best verified feasible allocation for these inputs.`;
+}
+
 
   return (
     <main className="min-h-screen bg-[#080808] text-white tracking-[-0.02em]" style={{ fontFamily: "'Inter', sans-serif" }}>
@@ -678,8 +895,8 @@ export default function App() {
             </div>
             <div className="mt-8 pt-6 border-t border-white/10 grid sm:grid-cols-3 gap-5 text-sm">
               <div><p className="text-white/40 text-xs mb-1">Why it fits</p><p className="text-white/80">Finds the optimal feasible combination under multiple resource constraints.</p></div>
-              <div><p className="text-white/40 text-xs mb-1">Compared with Greedy</p><p className="text-white/80">Does not sacrifice global profit for a locally attractive crop.</p></div>
-              <div><p className="text-white/40 text-xs mb-1">Compared with exhaustive search</p><p className="text-white/80">Reuses resource states rather than repeatedly solving equivalent subproblems.</p></div>
+              <div><p className="text-white/40 text-xs mb-1">Compared with heuristic search</p><p className="text-white/80">Exact methods evaluate the global resource trade-offs instead of relying only on a local crop ranking.</p></div>
+              <div><p className="text-white/40 text-xs mb-1">Compared with exhaustive search</p><p className="text-white/80">Uses different search strategies to evaluate feasible whole-acre allocations.</p></div>
             </div>
           </div>
           <p className="text-center text-[11px] text-white/30 mt-8 leading-relaxed">AGROVA — CROP SELECTION OPTIMIZER<br />Illustrative academic prototype. Actual crop suitability, costs, water needs and returns vary by location, soil, variety and market conditions.</p>
